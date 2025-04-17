@@ -29,7 +29,7 @@ app.post("/api/download", async (req: Request, res: Response) => {
   log.info(req.headers["user-agent"]!);
   log.info(link);
 
-  let opts: { [key: string]: string | boolean } = {};
+  const opts: { [key: string]: string | boolean } = {};
 
   switch (buttonClicked) {
     case "video_best":

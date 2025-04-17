@@ -11,7 +11,7 @@ export function handleDownloadEvents(
   process: ChildProcess,
   progressFilename: string,
   filenameWithoutExt: string
-) {
+): void {
   process.stdout?.on("data", (data: Buffer) => {
     const dataTrimmed = data.toString().trim();
 

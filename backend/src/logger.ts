@@ -1,13 +1,15 @@
 import { appendFile } from "fs/promises";
 
 export class Logger {
-  async debug(msg: string) {
+  async debug(msg: string): Promise<void> {
     await appendFile("../logs.txt", `\n[DEBUG]: ${msg}`);
   }
-  async info(msg: string) {
+
+  async info(msg: string): Promise<void> {
     await appendFile("../logs.txt", `\n${msg}`);
   }
-  async error(msg: string) {
+
+  async error(msg: string): Promise<void> {
     await appendFile("../logs.txt", `\n[ERROR]: ${msg}`);
   }
 }
