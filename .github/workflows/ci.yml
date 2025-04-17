@@ -24,7 +24,7 @@ jobs:
       - name: 🚀 Deploy via SSH
         run: |
           ssh -i ~/.ssh/KEY1.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}
-          cd video-to-audio-converter/docker/dev
+          cd /home/ec2-user/video-to-audio-converter
           git pull origin main
           docker-compose down
           docker-compose up -d --build
