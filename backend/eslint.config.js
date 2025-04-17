@@ -6,7 +6,7 @@ module.exports = tseslint.config(
   ...tseslint.configs.recommended,
   {
     rules: {
-      // Customize rules
+      // Customize rules as needed
       '@typescript-eslint/no-explicit-any': 'warn',
       'no-console': 'warn',
       '@typescript-eslint/explicit-function-return-type': 'error'
@@ -18,4 +18,4 @@ module.exports = tseslint.config(
       }
     }
   }
-)
+);
