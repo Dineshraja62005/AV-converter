@@ -63,14 +63,14 @@ jobs:
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/KEY1.pem
+          chmod 600 ~/.ssh/KEY1.pem
           ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
 
       - name: Deploy via SSH
         run: |
           ssh ${{ secrets.EC2_HOST }} << 'EOF'
-          cd /home/ec2-user/your-app-folder
+          cd /home/ec2-user/video-to-audio-converter/docker/dev
           git pull origin main
           docker-compose down
           docker-compose up -d --build
