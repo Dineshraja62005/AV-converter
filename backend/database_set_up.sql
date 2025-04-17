@@ -1,8 +1,6 @@
 DROP DATABASE IF EXISTS av_converter;
 CREATE DATABASE av_converter;
 
-\c av_converter
-
 DROP TABLE IF EXISTS users;
 
 CREATE TABLE users (

@@ -1,0 +1,52 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches: [ develop, main ]
+  pull_request:
+    branches: [ develop, main ]
+
+jobs:
+  frontend-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Use Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20'
+      
+      - name: Install Frontend Dependencies
+        working-directory: ./frontend
+        run: yarn install
+      
+      - name: Lint Frontend Code
+        working-directory: ./frontend
+        run: yarn lint
+      
+      - name: Run Frontend Tests
+        working-directory: ./frontend
+        run: yarn test
+
+  backend-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Use Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20'
+      
+      - name: Install Backend Dependencies
+        working-directory: ./backend
+        run: yarn install
+      
+      - name: Lint Backend Code
+        working-directory: ./backend
+        run: yarn lint
+      
+      - name: Run Backend Tests
+        working-directory: ./backend
+        run: yarn test
