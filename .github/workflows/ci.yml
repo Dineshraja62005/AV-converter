@@ -24,8 +24,7 @@ jobs:
       - name: 🚀 Deploy via SSH
         run: |
           ssh -i ~/.ssh/KEY1.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}
-          pwd 
-          ls
+          cd docker/dev
           git pull origin main
           docker compose down
           docker compose up -d --build
