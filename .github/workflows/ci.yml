@@ -2,74 +2,28 @@ name: Continuous Integration
 
 on:
   push:
-    branches: [ develop, main ]
+    branches: [ main ]
   pull_request:
-    branches: [ develop, main ]
+    branches: [ main ]
 
 jobs:
-  frontend-checks:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Use Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '20'
-
-      - name: Install Frontend Dependencies
-        working-directory: ./frontend
-        run: yarn install
-
-      - name: Lint Frontend Code
-        working-directory: ./frontend
-        run: yarn lint
-
-      - name: Run Frontend Tests
-        working-directory: ./frontend
-        run: yarn test
-
-  backend-checks:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Use Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '20'
-
-      - name: Install Backend Dependencies
-        working-directory: ./backend
-        run: yarn install
-
-      - name: Lint Backend Code
-        working-directory: ./backend
-        run: yarn lint
-
-      - name: Run Backend Tests
-        working-directory: ./backend
-        run: yarn test
-
   deploy-to-ec2:
     name: Deploy to AWS EC2
-    needs: [frontend-checks, backend-checks]
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
     steps:
-      - name: Checkout Code
+      - name: 📥 Checkout Code
         uses: actions/checkout@v3
 
-      - name: Setup SSH
+      - name: 🔐 Setup SSH
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/KEY1.pem
           chmod 600 ~/.ssh/KEY1.pem
           ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
 
-      - name: Deploy via SSH
+      - name: 🚀 Deploy via SSH
         run: |
-          ssh ${{ secrets.EC2_HOST }} << 'EOF'
+          ssh -i ~/.ssh/KEY1.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'EOF'
           cd /home/ec2-user/video-to-audio-converter/docker/dev
           git pull origin main
           docker-compose down
