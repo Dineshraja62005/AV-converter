@@ -18,9 +18,10 @@ jobs:
       - name: 🔐 Setup SSH
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/KEY1.pem
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/KEY1.pem  # Use the actual SSH private key here
           chmod 600 ~/.ssh/KEY1.pem
           ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+      
 
       - name: 🧱 Setup Terraform
         uses: hashicorp/setup-terraform@v3
