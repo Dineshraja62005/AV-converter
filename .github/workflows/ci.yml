@@ -1,4 +1,4 @@
-name: Continuous Integration
+name: CI/CD Pipeline
 
 on:
   push:
@@ -7,9 +7,10 @@ on:
     branches: [ main ]
 
 jobs:
-  deploy-to-ec2:
-    name: Deploy to AWS EC2
+  deploy:
+    name: Deploy to AWS EC2 via Terraform & Ansible
     runs-on: ubuntu-latest
+
     steps:
       - name: 📥 Checkout Code
         uses: actions/checkout@v3
@@ -21,11 +22,37 @@ jobs:
           chmod 600 ~/.ssh/KEY1.pem
           ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
 
-      - name: 🚀 Deploy via SSH
+      - name: 🧱 Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: 🌍 Terraform Init & Apply
+        working-directory: infra
+        run: |
+          terraform init
+          terraform apply -auto-approve \
+            -var="aws_access_key=${{ secrets.AWS_ACCESS_KEY_ID }}" \
+            -var="aws_secret_key=${{ secrets.AWS_SECRET_ACCESS_KEY }}" \
+            -var="aws_session_token=${{ secrets.AWS_SESSION_TOKEN }}" \
+            -var="key_name=${{ secrets.KEY_NAME }}" \
+            -var="private_key_path=~/.ssh/KEY1.pem"
+
+      - name: ⚙️ Install Ansible
+        run: |
+          sudo apt update
+          sudo apt install -y ansible
+
+      - name: 📦 Run Ansible Playbook
+        run: |
+          ansible-playbook -i "${{ secrets.EC2_HOST }}," ansible/playbook.yml \
+            --private-key ~/.ssh/KEY1.pem \
+            -u ${{ secrets.EC2_USER }} \
+            -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'"
+
+      - name: 🚀 Docker Compose Deploy on EC2
         run: |
           ssh -i ~/.ssh/KEY1.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'EOF'
-          cd ~/video-to-audio-converter/docker/dev
-          git pull origin main
-          docker compose down
-          docker compose up -d --build
+            cd ~/video-to-audio-converter/docker/dev
+            git pull origin main
+            docker compose down
+            docker compose up -d --build
           EOF

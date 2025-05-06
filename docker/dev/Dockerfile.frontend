@@ -8,4 +8,7 @@ COPY ./frontend/public ./public
 
 RUN yarn install
 
+# 👇 Add this line
+ENV HOST=0.0.0.0
+
 CMD ["yarn", "start"]

@@ -1,0 +1,28 @@
+- name: Configure AV Converter EC2
+  hosts: all
+  become: yes
+
+  tasks:
+    - name: Install Docker
+      apt:
+        name: docker.io
+        state: present
+        update_cache: true
+
+    - name: Install Docker Compose
+      get_url:
+        url: https://github.com/docker/compose/releases/download/v2.23.3/docker-compose-linux-x86_64
+        dest: /usr/local/bin/docker-compose
+        mode: '0755'
+
+    - name: Clone AV Converter Repo
+      git:
+        repo: https://github.com/Dineshraja62005/AV-converter.git
+        dest: /home/ubuntu/video-to-audio-converter
+        version: main
+
+    - name: Start Docker Compose
+      shell: |
+        cd /home/ubuntu/video-to-audio-converter/docker/dev
+        docker compose down
+        docker compose up -d --build
