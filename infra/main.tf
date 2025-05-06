@@ -5,6 +5,12 @@ provider "aws" {
   token      = var.aws_session_token
 }
 
+# Get default VPC info
+data "aws_vpc" "default" {
+  default = true
+}
+
+# Get Ubuntu AMI (explicitly specified)
 data "aws_ami" "ubuntu" {
   most_recent = true
   
@@ -21,15 +27,11 @@ data "aws_ami" "ubuntu" {
   owners = ["099720109477"] # Canonical
 }
 
-# Get default VPC info
-data "aws_vpc" "default" {
-  default = true
-}
-
 data "aws_security_group" "existing_sg" {
   name = "av_converter_sg"
 }
 
+# EC2 instance - explicitly using Ubuntu
 resource "aws_instance" "av_ec2" {
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = "t2.medium"
@@ -42,56 +44,26 @@ resource "aws_instance" "av_ec2" {
   }
 
   tags = {
-    Name        = "av-converter"
+    Name        = "av-converter-ubuntu"
     Environment = "production"
     Project     = "video-to-audio-converter"
+    OS          = "Ubuntu"
   }
 
+  # Ensure we have Python for Ansible
   provisioner "remote-exec" {
     inline = [
+      "echo 'Verifying Ubuntu installation...'",
+      "cat /etc/os-release",
       "sudo apt-get update",
-      "sudo apt-get install -y python3-pip git"
+      "sudo apt-get install -y python3-pip git curl"
     ]
 
     connection {
       type        = "ssh"
-      user        = "ubuntu"
+      user        = "ubuntu"  # Ubuntu uses 'ubuntu' as the default user
       private_key = file(var.private_key_path)
       host        = self.public_ip
     }
   }
 }
-
-# Remove the security group resource since we're using an existing one
-# resource "aws_security_group" "av_sg" {
-#   name_prefix = "av_converter_sg_"
-#   description = "Allow SSH and application port access"
-#
-#   ingress {
-#     from_port   = 22
-#     to_port     = 22
-#     protocol    = "tcp"
-#     cidr_blocks = ["0.0.0.0/0"]
-#     description = "SSH access"
-#   }
-#
-#   ingress {
-#     from_port   = 5000
-#     to_port     = 5000
-#     protocol    = "tcp"
-#     cidr_blocks = ["0.0.0.0/0"]
-#     description = "Application access"
-#   }
-#
-#   egress {
-#     from_port   = 0
-#     to_port     = 0
-#     protocol    = "-1"
-#     cidr_blocks = ["0.0.0.0/0"]
-#     description = "Allow all outbound traffic"
-#   }
-#
-#   tags = {
-#     Name = "av-converter-security-group"
-#   }
-# }

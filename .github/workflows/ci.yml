@@ -1,79 +1,55 @@
-name: CI/CD Pipeline
+name: EC2 Deployment
 
 on:
   push:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   deploy:
-    name: Deploy to EC2
     runs-on: ubuntu-latest
     steps:
-      - name: 📥 Checkout Code
+      - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: 🔐 Setup SSH & Deploy
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          SSH_HOST: ${{ secrets.EC2_HOST }}
-          SSH_USER: ${{ secrets.EC2_USER }}
-        run: |
-          echo "Setting up SSH..."
-          
-          # Create SSH directory
-          mkdir -p ~/.ssh
-          
-          # Key must start with this line
-          echo "-----BEGIN RSA PRIVATE KEY-----" > ~/.ssh/deploy_key
-          # Add the rest of the key content (must be properly formatted with line breaks)
-          echo "$SSH_PRIVATE_KEY" >> ~/.ssh/deploy_key
-          # Key must end with this line
-          echo "-----END RSA PRIVATE KEY-----" >> ~/.ssh/deploy_key
-          
-          chmod 600 ~/.ssh/deploy_key
-          
-          # Add host to known hosts
-          ssh-keyscan -H $SSH_HOST >> ~/.ssh/known_hosts
-          
-          echo "Testing SSH connection..."
-          # Try to establish a simple SSH connection
-          if ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no $SSH_USER@$SSH_HOST "echo Connected successfully"; then
-            echo "SSH connection successful!"
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu  # Ubuntu default username
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 22
+          script: |
+            echo "Starting deployment..."
             
-            echo "Deploying application..."
-            # Deploy the application
-            ssh -i ~/.ssh/deploy_key $SSH_USER@$SSH_HOST 'bash -s' << 'DEPLOY_SCRIPT'
-          # Update packages
-          sudo apt update
-
-          # Install required packages
-          sudo apt install -y docker.io git
-
-          # Install Docker Compose
-          if ! command -v docker-compose &> /dev/null; then
-            sudo curl -L "https://github.com/docker/compose/releases/download/v2.23.3/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-            sudo chmod +x /usr/local/bin/docker-compose
-          fi
-
-          # Clone or update repository
-          cd ~
-          if [ ! -d "video-to-audio-converter" ]; then
-            git clone https://github.com/Dineshraja62005/AV-converter.git video-to-audio-converter
-          else
-            cd video-to-audio-converter
-            git pull origin main
-          fi
-
-          # Deploy with Docker Compose
-          cd ~/video-to-audio-converter/docker/dev
-          sudo docker-compose down
-          sudo docker-compose up -d --build
-
-          echo "Deployment completed successfully!"
-          DEPLOY_SCRIPT
-                    else
-                      echo "SSH connection failed."
-                      exit 1
-                    fi
+            # Update packages
+            sudo apt update
+            
+            # Install required packages
+            sudo apt install -y docker.io git
+            
+            # Install Docker Compose if not already installed
+            if ! command -v docker-compose &> /dev/null; then
+              sudo curl -L "https://github.com/docker/compose/releases/download/v2.23.3/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+              sudo chmod +x /usr/local/bin/docker-compose
+            fi
+            
+            # Clone or update the repository
+            cd ~
+            if [ ! -d "video-to-audio-converter" ]; then
+              git clone https://github.com/Dineshraja62005/AV-converter.git video-to-audio-converter
+            else
+              cd video-to-audio-converter
+              git pull origin main
+            fi
+            
+            # Deploy with Docker Compose
+            cd ~/video-to-audio-converter/docker/dev
+            sudo docker-compose down || true
+            sudo docker-compose up -d --build
+            
+            # Verify deployment
+            sudo docker ps
+            echo "Deployment completed!"
