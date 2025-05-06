@@ -44,13 +44,6 @@ resource "aws_instance" "av_ec2" {
   }
 }
 
-# Variables definition (example)
-variable "aws_access_key" {}
-variable "aws_secret_key" {}
-variable "aws_session_token" {}
-variable "private_key_path" {}
-variable "key_name" {}
-
 # Outputs (optional)
 output "instance_public_ip" {
   value = aws_instance.av_ec2.public_ip
