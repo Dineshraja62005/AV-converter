@@ -24,6 +24,10 @@ jobs:
           echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+          # Debug SSH key
+          ls -la ~/.ssh/
+          # Test SSH connection - comment out after debugging
+          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "echo SSH connection successful"
 
       - name: 🧱 Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -47,6 +51,7 @@ jobs:
 
       - name: 📦 Run Ansible Playbook for Full Deployment
         run: |
-          echo "${{ secrets.EC2_HOST }} ansible_user=${{ secrets.EC2_USER }} ansible_ssh_private_key_file=~/.ssh/id_rsa" > inventory.ini
-          ansible-playbook -i inventory.ini ansible/playbook.yml \
-            -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'"
+          echo "${{ secrets.EC2_HOST }} ansible_user=${{ secrets.EC2_USER }} ansible_ssh_private_key_file=~/.ssh/id_rsa ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'" > inventory.ini
+          cat inventory.ini # Debug output
+          # Verbose mode to see more details about the SSH connection
+          ansible-playbook -vvv -i inventory.ini ansible/playbook.yml
