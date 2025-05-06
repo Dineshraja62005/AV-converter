@@ -44,36 +44,36 @@ jobs:
             
             echo "Deploying application..."
             # Deploy the application
-            ssh -i ~/.ssh/deploy_key $SSH_USER@$SSH_HOST << 'EOF'
-              # Update packages
-              sudo apt update
-              
-              # Install required packages
-              sudo apt install -y docker.io git
-              
-              # Install Docker Compose
-              if ! command -v docker-compose &> /dev/null; then
-                sudo curl -L "https://github.com/docker/compose/releases/download/v2.23.3/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-                sudo chmod +x /usr/local/bin/docker-compose
-              fi
-              
-              # Clone or update repository
-              cd ~
-              if [ ! -d "video-to-audio-converter" ]; then
-                git clone https://github.com/Dineshraja62005/AV-converter.git video-to-audio-converter
-              else
-                cd video-to-audio-converter
-                git pull origin main
-              fi
-              
-              # Deploy with Docker Compose
-              cd ~/video-to-audio-converter/docker/dev
-              sudo docker-compose down
-              sudo docker-compose up -d --build
-              
-              echo "Deployment completed successfully!"
-            EOF
-          else
-            echo "SSH connection failed."
-            exit 1
+            ssh -i ~/.ssh/deploy_key $SSH_USER@$SSH_HOST 'bash -s' << 'DEPLOY_SCRIPT'
+          # Update packages
+          sudo apt update
+
+          # Install required packages
+          sudo apt install -y docker.io git
+
+          # Install Docker Compose
+          if ! command -v docker-compose &> /dev/null; then
+            sudo curl -L "https://github.com/docker/compose/releases/download/v2.23.3/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+            sudo chmod +x /usr/local/bin/docker-compose
           fi
+
+          # Clone or update repository
+          cd ~
+          if [ ! -d "video-to-audio-converter" ]; then
+            git clone https://github.com/Dineshraja62005/AV-converter.git video-to-audio-converter
+          else
+            cd video-to-audio-converter
+            git pull origin main
+          fi
+
+          # Deploy with Docker Compose
+          cd ~/video-to-audio-converter/docker/dev
+          sudo docker-compose down
+          sudo docker-compose up -d --build
+
+          echo "Deployment completed successfully!"
+          DEPLOY_SCRIPT
+                    else
+                      echo "SSH connection failed."
+                      exit 1
+                    fi
