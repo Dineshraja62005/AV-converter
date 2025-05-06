@@ -38,6 +38,9 @@ resource "aws_instance" "av_ec2" {
       user        = "ubuntu"
       private_key = file(var.private_key_path)
       host        = self.public_ip
+      timeout     = "5m"                 # Wait up to 5 mins
+      retries     = 10                   # Retry SSH connection
+      sleep_between_retries = 15        # Wait between retries (Terraform 1.7+)
     }
   }
 }
