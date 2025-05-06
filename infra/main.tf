@@ -1,26 +1,47 @@
 provider "aws" {
-  region     = "us-east-1"
+  region     = var.region
   access_key = var.aws_access_key
   secret_key = var.aws_secret_key
   token      = var.aws_session_token
 }
 
+data "aws_ami" "ubuntu" {
+  most_recent = true
+  
+  filter {
+    name   = "name"
+    values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"]
+  }
+  
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+  
+  owners = ["099720109477"] # Canonical
+}
 
 resource "aws_instance" "av_ec2" {
-  ami           = "ami-0c2b8ca1dad447f8a" # Ubuntu 22.04 LTS (update as needed)
-  instance_type = "t2.medium"
-  key_name      = var.key_name
+  ami                    = data.aws_ami.ubuntu.id
+  instance_type          = "t2.medium"
+  key_name               = var.key_name
+  vpc_security_group_ids = [aws_security_group.av_sg.id]
 
-  tags = {
-    Name = "av-converter"
+  root_block_device {
+    volume_size = 20
+    volume_type = "gp3"
   }
 
-  vpc_security_group_ids = [aws_security_group.av_sg.id]
+  tags = {
+    Name        = "av-converter"
+    Environment = "production"
+    Project     = "video-to-audio-converter"
+  }
 
   provisioner "remote-exec" {
     inline = [
       "sudo apt-get update",
-      "sudo apt-get install -y python3-pip"
+      "sudo apt-get install -y python3-pip git"
     ]
 
     connection {
@@ -34,23 +55,33 @@ resource "aws_instance" "av_ec2" {
 
 resource "aws_security_group" "av_sg" {
   name        = "av_converter_sg"
-  description = "Allow SSH and web ports"
+  description = "Allow SSH and application port access"
+
   ingress {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
+    description = "SSH access"
   }
+
   ingress {
     from_port   = 5000
     to_port     = 5000
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
+    description = "Application access"
   }
+
   egress {
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
+    description = "Allow all outbound traffic"
+  }
+
+  tags = {
+    Name = "av-converter-security-group"
   }
 }

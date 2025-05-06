@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      TF_VAR_ec2_host: ${{ secrets.EC2_HOST }} 
+      TF_VAR_ec2_host: ${{ secrets.EC2_HOST }}
 
     steps:
       - name: 📥 Checkout Code
@@ -21,10 +21,9 @@ jobs:
       - name: 🔐 Setup SSH
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/KEY1.pem  # Use the actual SSH private key here
-          chmod 600 ~/.ssh/KEY1.pem
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
-      
 
       - name: 🧱 Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -38,25 +37,16 @@ jobs:
             -var="aws_secret_key=${{ secrets.AWS_SECRET_ACCESS_KEY }}" \
             -var="aws_session_token=${{ secrets.AWS_SESSION_TOKEN }}" \
             -var="key_name=${{ secrets.KEY_NAME }}" \
-            -var="private_key_path=~/.ssh/KEY1.pem"
+            -var="private_key_path=~/.ssh/id_rsa" \
+            -var="ec2_host=${{ secrets.EC2_HOST }}"
 
       - name: ⚙️ Install Ansible
         run: |
           sudo apt update
           sudo apt install -y ansible
 
-      - name: 📦 Run Ansible Playbook
+      - name: 📦 Run Ansible Playbook for Full Deployment
         run: |
-          ansible-playbook -i "${{ secrets.EC2_HOST }}," ansible/playbook.yml \
-            --private-key ~/.ssh/KEY1.pem \
-            -u ${{ secrets.EC2_USER }} \
+          echo "${{ secrets.EC2_HOST }} ansible_user=${{ secrets.EC2_USER }} ansible_ssh_private_key_file=~/.ssh/id_rsa" > inventory.ini
+          ansible-playbook -i inventory.ini ansible/playbook.yml \
             -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'"
-
-      - name: 🚀 Docker Compose Deploy on EC2
-        run: |
-          ssh -i ~/.ssh/KEY1.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'EOF'
-            cd ~/video-to-audio-converter/docker/dev
-            git pull origin main
-            docker compose down
-            docker compose up -d --build
-          EOF
