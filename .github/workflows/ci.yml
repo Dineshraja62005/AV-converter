@@ -21,13 +21,12 @@ jobs:
       - name: 🔐 Setup SSH
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_rsa
+          echo "${{ secrets.EC2_SSH_KEY }}" | tr -d '\r' > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
-          # Debug SSH key
-          ls -la ~/.ssh/
-          # Test SSH connection - comment out after debugging
-          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "echo SSH connection successful"
+          echo "Checking key format:"
+          head -n 1 ~/.ssh/id_rsa | grep -q "BEGIN" && echo "Key begins correctly" || echo "Key format problem"
+          wc -l ~/.ssh/id_rsa
 
       - name: 🧱 Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -53,5 +52,23 @@ jobs:
         run: |
           echo "${{ secrets.EC2_HOST }} ansible_user=${{ secrets.EC2_USER }} ansible_ssh_private_key_file=~/.ssh/id_rsa ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'" > inventory.ini
           cat inventory.ini # Debug output
-          # Verbose mode to see more details about the SSH connection
           ansible-playbook -vvv -i inventory.ini ansible/playbook.yml
+        continue-on-error: true
+
+      - name: 🌍 Alternative Direct SSH Deployment
+        run: |
+          # Try direct deployment method
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'EOF'
+            sudo apt update
+            sudo apt install -y docker.io docker-compose git
+            cd ~
+            if [ ! -d "video-to-audio-converter" ]; then
+              git clone https://github.com/Dineshraja62005/AV-converter.git video-to-audio-converter
+            else
+              cd video-to-audio-converter
+              git pull origin main
+            fi
+            cd ~/video-to-audio-converter/docker/dev
+            sudo docker-compose down
+            sudo docker-compose up -d --build
+          EOF
