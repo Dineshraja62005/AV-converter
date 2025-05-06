@@ -11,6 +11,9 @@ jobs:
     name: Deploy to AWS EC2 via Terraform & Ansible
     runs-on: ubuntu-latest
 
+    env:
+      TF_VAR_ec2_host: ${{ secrets.EC2_HOST }} 
+
     steps:
       - name: 📥 Checkout Code
         uses: actions/checkout@v3
