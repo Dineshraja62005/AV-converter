@@ -21,12 +21,17 @@ jobs:
       - name: 🔐 Setup SSH
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.EC2_SSH_KEY }}" | tr -d '\r' > ~/.ssh/KEY1.pem
-          chmod 600 ~/.ssh/KEY1.pem
+          # Write key without any filtering or processing
+          printf "%s" "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/key.pem
+          chmod 600 ~/.ssh/key.pem
+          ssh-keygen -y -f ~/.ssh/key.pem > ~/.ssh/key.pub || echo "Unable to extract public key - might be in wrong format"
           ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
-          echo "Checking key format:"
-          head -n 1 ~/.ssh/KEY1.pem | grep -q "BEGIN" && echo "Key begins correctly" || echo "Key format problem"
-          wc -l ~/.ssh/KEY1.pem
+          # Debug key information
+          echo "==== Key information ===="
+          ls -la ~/.ssh/
+          file ~/.ssh/key.pem
+          # Test SSH connection directly before proceeding
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/key.pem -v ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "echo SSH TEST CONNECTION"
 
       - name: 🧱 Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -40,7 +45,7 @@ jobs:
             -var="aws_secret_key=${{ secrets.AWS_SECRET_ACCESS_KEY }}" \
             -var="aws_session_token=${{ secrets.AWS_SESSION_TOKEN }}" \
             -var="key_name=${{ secrets.KEY_NAME }}" \
-            -var="private_key_path=~/.ssh/KEY1.pem" \
+            -var="private_key_path=~/.ssh/key.pem" \
             -var="ec2_host=${{ secrets.EC2_HOST }}"
 
       - name: ⚙️ Install Ansible
@@ -50,7 +55,7 @@ jobs:
 
       - name: 📦 Run Ansible Playbook for Full Deployment
         run: |
-          echo "${{ secrets.EC2_HOST }} ansible_user=${{ secrets.EC2_USER }} ansible_ssh_private_key_file=~/.ssh/KEY1.pem ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'" > inventory.ini
+          echo "${{ secrets.EC2_HOST }} ansible_user=${{ secrets.EC2_USER }} ansible_ssh_private_key_file=~/.ssh/key.pem ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes'" > inventory.ini
           cat inventory.ini # Debug output
           ansible-playbook -vvv -i inventory.ini ansible/playbook.yml
         continue-on-error: true
@@ -58,7 +63,7 @@ jobs:
       - name: 🌍 Alternative Direct SSH Deployment
         run: |
           # Try direct deployment method
-          ssh -o StrictHostKeyChecking=no -i ~/.ssh/KEY1.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'EOF'
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes -i ~/.ssh/key.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'EOF'
             sudo apt update
             sudo apt install -y docker.io docker-compose git
             cd ~
