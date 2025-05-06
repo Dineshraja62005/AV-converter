@@ -39,8 +39,6 @@ resource "aws_instance" "av_ec2" {
       private_key = file(var.private_key_path)
       host        = self.public_ip
     }
-
-    depends_on = [data.aws_security_group.existing_sg]
   }
 }
 
