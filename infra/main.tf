@@ -6,7 +6,7 @@ provider "aws" {
 }
 
 # Provision on an existing EC2 instance
-resource "null_resource" "provision_existing_ec2"{
+resource "aws_instance" "av_ec2"{
   connection {
     type        = "ssh"
     user        = "ubuntu"
