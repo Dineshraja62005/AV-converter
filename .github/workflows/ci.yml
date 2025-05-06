@@ -1,79 +1,64 @@
 name: CI/CD Pipeline
-
 on:
   push:
     branches: [ main ]
   pull_request:
     branches: [ main ]
-
 jobs:
   deploy:
-    name: Deploy to AWS EC2 via Terraform & Ansible
+    name: Deploy to AWS EC2 via AWS SSM
     runs-on: ubuntu-latest
-
-    env:
-      TF_VAR_ec2_host: ${{ secrets.EC2_HOST }}
-
     steps:
       - name: 📥 Checkout Code
         uses: actions/checkout@v3
-
-      - name: 🔐 Setup SSH
+        
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
+          
+      - name: Deploy using AWS SSM Run Command
         run: |
-          mkdir -p ~/.ssh
-          # Write key without any filtering or processing
-          printf "%s" "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/key.pem
-          chmod 600 ~/.ssh/key.pem
-          ssh-keygen -y -f ~/.ssh/key.pem > ~/.ssh/key.pub || echo "Unable to extract public key - might be in wrong format"
-          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
-          # Debug key information
-          echo "==== Key information ===="
-          ls -la ~/.ssh/
-          file ~/.ssh/key.pem
-          # Test SSH connection directly before proceeding
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/key.pem -v ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "echo SSH TEST CONNECTION"
-
-      - name: 🧱 Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-
-      - name: 🌍 Terraform Init & Apply
-        working-directory: infra
-        run: |
-          terraform init
-          terraform apply -auto-approve \
-            -var="aws_access_key=${{ secrets.AWS_ACCESS_KEY_ID }}" \
-            -var="aws_secret_key=${{ secrets.AWS_SECRET_ACCESS_KEY }}" \
-            -var="aws_session_token=${{ secrets.AWS_SESSION_TOKEN }}" \
-            -var="key_name=${{ secrets.KEY_NAME }}" \
-            -var="private_key_path=~/.ssh/key.pem" \
-            -var="ec2_host=${{ secrets.EC2_HOST }}"
-
-      - name: ⚙️ Install Ansible
-        run: |
+          # Get instance ID using the public IP
+          INSTANCE_ID=$(aws ec2 describe-instances \
+            --filters "Name=ip-address,Values=${{ secrets.EC2_HOST }}" \
+            --query "Reservations[].Instances[].InstanceId" \
+            --output text)
+            
+          if [ -z "$INSTANCE_ID" ]; then
+            echo "Could not find EC2 instance with IP ${{ secrets.EC2_HOST }}"
+            exit 1
+          fi
+          
+          echo "Found EC2 instance: $INSTANCE_ID"
+          
+          # Create deployment script
+          cat > deploy.sh << 'EOL'
+          #!/bin/bash
+          set -e
           sudo apt update
-          sudo apt install -y ansible
-
-      - name: 📦 Run Ansible Playbook for Full Deployment
-        run: |
-          echo "${{ secrets.EC2_HOST }} ansible_user=${{ secrets.EC2_USER }} ansible_ssh_private_key_file=~/.ssh/key.pem ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes'" > inventory.ini
-          cat inventory.ini # Debug output
-          ansible-playbook -vvv -i inventory.ini ansible/playbook.yml
-        continue-on-error: true
-
-      - name: 🌍 Alternative Direct SSH Deployment
-        run: |
-          # Try direct deployment method
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes -i ~/.ssh/key.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'EOF'
-            sudo apt update
-            sudo apt install -y docker.io docker-compose git
-            cd ~
-            if [ ! -d "video-to-audio-converter" ]; then
-              git clone https://github.com/Dineshraja62005/AV-converter.git video-to-audio-converter
-            else
-              cd video-to-audio-converter
-              git pull origin main
-            fi
-            cd ~/video-to-audio-converter/docker/dev
-            sudo docker-compose down
-            sudo docker-compose up -d --build
-          EOF
+          sudo apt install -y docker.io docker-compose git
+          cd ~
+          if [ ! -d "video-to-audio-converter" ]; then
+            git clone https://github.com/Dineshraja62005/AV-converter.git video-to-audio-converter
+          else
+            cd video-to-audio-converter
+            git pull origin main
+          fi
+          cd ~/video-to-audio-converter/docker/dev
+          sudo docker-compose down
+          sudo docker-compose up -d --build
+          EOL
+          
+          # Execute deployment using SSM
+          aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --parameters "commands=[$(cat deploy.sh | jq -Rs .)]" \
+            --comment "Deploy AV Converter application" \
+            --output text
+            
+          echo "Deployment command sent to EC2 instance"
