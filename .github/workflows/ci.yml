@@ -53,3 +53,4 @@ jobs:
             # Verify deployment
             sudo docker ps
             echo "Deployment completed!"
+            
