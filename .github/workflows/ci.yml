@@ -1,81 +1,56 @@
-name: K8s Troubleshooting
+name: EC2 Deployment
 
 on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
-  troubleshoot:
+  deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Troubleshoot Kubernetes on EC2
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Deploy to EC2
         uses: appleboy/ssh-action@v1.0.0
         with:
           host: ${{ secrets.EC2_HOST }}
-          username: ubuntu
+          username: ubuntu  # Ubuntu default username
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 22
           script: |
-            echo "========== TROUBLESHOOTING KUBERNETES DEPLOYMENT =========="
+            echo "Starting deployment..."
             
-            # 1. Check if Minikube is running
-            echo "Checking Minikube status:"
-            minikube status
+            # Update packages
+            sudo apt update
             
-            # 2. Check running pods
-            echo -e "\nChecking pod status:"
-            kubectl get pods -A
+            # Install required packages
+            sudo apt install -y docker.io git
             
-            # 3. Check our specific application pods
-            echo -e "\nChecking av-converter pods:"
-            kubectl get pods -l app=av-converter -o wide
+            # Install Docker Compose if not already installed
+            if ! command -v docker-compose &> /dev/null; then
+              sudo curl -L "https://github.com/docker/compose/releases/download/v2.23.3/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+              sudo chmod +x /usr/local/bin/docker-compose
+            fi
             
-            # 4. Check services
-            echo -e "\nChecking services:"
-            kubectl get services
+            # Clone or update the repository
+            cd ~
+            if [ ! -d "video-to-audio-converter" ]; then
+              git clone https://github.com/Dineshraja62005/AV-converter.git video-to-audio-converter
+            else
+              cd video-to-audio-converter
+              git pull origin main
+            fi
             
-            # 5. Check detailed service info
-            echo -e "\nDetailed frontend service info:"
-            kubectl describe service frontend-service
+            # Deploy with Docker Compose
+            cd ~/video-to-audio-converter/docker/dev
+            sudo docker-compose down || true
+            sudo docker-compose up -d --build
             
-            # 6. Check firewall/security group
-            echo -e "\nChecking if port 30080 is open:"
-            sudo netstat -tulpn | grep 30080
-            
-            # 7. Try to access the service locally
-            echo -e "\nTrying to access service locally:"
-            curl -v localhost:30080
-            
-            # 8. Check Minikube service URL
-            echo -e "\nChecking Minikube service URL:"
-            minikube service frontend-service --url
-            
-            # 9. Check node port exposure
-            echo -e "\nVerifying NodePort configuration:"
-            kubectl get service frontend-service -o jsonpath='{.spec.ports[0].nodePort}'
-            
-            # 10. Check if firewall is blocking the port
-            echo -e "\nChecking UFW status:"
-            sudo ufw status
-            
-            # 11. Add security group rule for port 30080 via AWS CLI
-            echo -e "\nAdding security group rule for port 30080:"
-            INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
-            SECURITY_GROUP_ID=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query 'Reservations[0].Instances[0].SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "AWS CLI not configured")
-            echo "Security Group ID: $SECURITY_GROUP_ID"
-            
-            # 12. Fix: Ensure the port is accessible
-            echo -e "\nFIX: Manually open port 30080 for external access:"
-            echo "Run this command manually in AWS console:"
-            echo "aws ec2 authorize-security-group-ingress --group-id YOUR_SECURITY_GROUP_ID --protocol tcp --port 30080 --cidr 0.0.0.0/0"
-            
-            # 13. Restart service as a fix
-            echo -e "\nFIX: Restarting services:"
-            kubectl rollout restart deployment frontend
-            
-            # 14. Test with port-forward as alternative
-            echo -e "\nSetting up port forwarding as alternative access method:"
-            echo "kubectl port-forward service/frontend-service 30080:80 --address 0.0.0.0 &"
-            
-            echo -e "\n========== TROUBLESHOOTING COMPLETE =========="
-
+            # Verify deployment
+            sudo docker ps
+            echo "Deployment completed!"
             
