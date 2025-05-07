@@ -128,3 +128,4 @@ jobs:
           echo "📊 Access your application at:"
           echo "   http://${{ steps.get-ip.outputs.ec2_ip }}:30080"
           echo "============================================================"
+          
