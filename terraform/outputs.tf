@@ -1,24 +1,32 @@
 output "public_ip" {
   description = "Public IP address of the EC2 instance"
-  value       = aws_instance.k8s_node.public_ip
+  value       = local.create_instance ? aws_instance.k8s_node[0].public_ip : (
+    length(data.aws_instances.existing_k8s.ids) > 0 ? data.aws_instances.existing_k8s.public_ips[0] : "no_instance_found"
+  )
 }
 
 output "public_dns" {
   description = "Public DNS of the EC2 instance"
-  value       = aws_instance.k8s_node.public_dns
+  value       = local.create_instance ? aws_instance.k8s_node[0].public_dns : (
+    length(data.aws_instances.existing_k8s.ids) > 0 ? data.aws_instances.existing_k8s.public_dns[0] : "no_instance_found"
+  )
 }
 
 output "instance_id" {
   description = "ID of the EC2 instance"
-  value       = aws_instance.k8s_node.id
+  value       = local.create_instance ? aws_instance.k8s_node[0].id : (
+    length(data.aws_instances.existing_k8s.ids) > 0 ? data.aws_instances.existing_k8s.ids[0] : "no_instance_found"
+  )
 }
 
 output "kubernetes_url" {
   description = "URL to access the Kubernetes application"
-  value       = "http://${aws_instance.k8s_node.public_ip}:30080"
+  value       = "http://${local.create_instance ? aws_instance.k8s_node[0].public_ip : (
+    length(data.aws_instances.existing_k8s.ids) > 0 ? data.aws_instances.existing_k8s.public_ips[0] : "no_instance_found"
+  )}:30080"
 }
 
 output "security_group_id" {
   description = "ID of the security group"
-  value       = aws_security_group.k8s_sg.id
+  value       = local.sg_id
 }

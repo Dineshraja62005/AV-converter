@@ -37,3 +37,13 @@ variable "instance_type" {
   type        = string
   default     = "t2.medium"
 }
+
+# Add a random provider requirement
+terraform {
+  required_providers {
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.1"
+    }
+  }
+}
