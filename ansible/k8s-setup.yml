@@ -1,10 +1,9 @@
 ---
 - name: Set up Kubernetes with Minikube
-  hosts: k8s_nodes
+  hosts: all
   become: true
   vars:
     minikube_version: "latest"
-    kubectl_version: "stable"
     docker_users:
       - ubuntu
 
@@ -58,9 +57,15 @@
         append: yes
       loop: "{{ docker_users }}"
 
+    # Fixed kubectl download process
+    - name: Get latest stable kubectl version
+      shell: curl -L -s https://dl.k8s.io/release/stable.txt
+      register: kubectl_version
+      changed_when: false
+
     - name: Download kubectl
       get_url:
-        url: "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/{{ kubectl_version }}.txt)/bin/linux/amd64/kubectl"
+        url: "https://dl.k8s.io/release/{{ kubectl_version.stdout }}/bin/linux/amd64/kubectl"
         dest: /usr/local/bin/kubectl
         mode: '0755'
         force: yes
@@ -71,7 +76,7 @@
 
     - name: Download Minikube
       get_url:
-        url: "https://storage.googleapis.com/minikube/releases/{{ minikube_version }}/minikube-linux-amd64"
+        url: "https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64"
         dest: /usr/local/bin/minikube
         mode: '0755'
         force: yes
@@ -240,6 +245,9 @@
           # For external access, create a tunnel in the background
           echo "Creating Minikube tunnel for external access..."
           nohup minikube tunnel > /dev/null 2>&1 &
+
+          # Open port 30080 in the firewall if needed
+          sudo iptables -I INPUT -p tcp --dport 30080 -j ACCEPT
 
           echo "Application deployed successfully!"
           echo "Frontend URL: http://$(curl -s ifconfig.me):30080"
