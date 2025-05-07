@@ -1,0 +1,262 @@
+---
+- name: Set up Kubernetes with Minikube
+  hosts: k8s_nodes
+  become: true
+  vars:
+    minikube_version: "latest"
+    kubectl_version: "stable"
+    docker_users:
+      - ubuntu
+
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install required packages
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - python3-pip
+          - unzip
+          - jq
+        state: present
+
+    - name: Add Docker GPG key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Add Docker repository
+      apt_repository:
+        repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+
+    - name: Install Docker
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+        state: present
+
+    - name: Ensure Docker service is enabled and started
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Add users to docker group
+      user:
+        name: "{{ item }}"
+        groups: docker
+        append: yes
+      loop: "{{ docker_users }}"
+
+    - name: Download kubectl
+      get_url:
+        url: "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/{{ kubectl_version }}.txt)/bin/linux/amd64/kubectl"
+        dest: /usr/local/bin/kubectl
+        mode: '0755'
+        force: yes
+      register: kubectl_download
+      retries: 3
+      delay: 5
+      until: kubectl_download is succeeded
+
+    - name: Download Minikube
+      get_url:
+        url: "https://storage.googleapis.com/minikube/releases/{{ minikube_version }}/minikube-linux-amd64"
+        dest: /usr/local/bin/minikube
+        mode: '0755'
+        force: yes
+      register: minikube_download
+      retries: 3
+      delay: 5
+      until: minikube_download is succeeded
+
+    - name: Create Kubernetes config directory
+      file:
+        path: /home/ubuntu/.kube
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+
+    - name: Start Minikube
+      become_user: ubuntu
+      shell: |
+        minikube start --driver=docker --memory=2048 --cpus=2
+      args:
+        creates: /home/ubuntu/.minikube
+      environment:
+        HOME: /home/ubuntu
+
+    - name: Create k8s-manifests directory
+      file:
+        path: /home/ubuntu/k8s-manifests
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+
+    - name: Copy frontend deployment manifest
+      copy:
+        dest: /home/ubuntu/k8s-manifests/frontend-deployment.yaml
+        content: |
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: frontend
+            labels:
+              app: av-converter
+              tier: frontend
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: av-converter
+                tier: frontend
+            template:
+              metadata:
+                labels:
+                  app: av-converter
+                  tier: frontend
+              spec:
+                containers:
+                - name: frontend
+                  image: av-converter-frontend:latest
+                  imagePullPolicy: Never
+                  ports:
+                  - containerPort: 3000
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: frontend-service
+            labels:
+              app: av-converter
+              tier: frontend
+          spec:
+            type: NodePort
+            ports:
+            - port: 80
+              targetPort: 3000
+              nodePort: 30080
+            selector:
+              app: av-converter
+              tier: frontend
+        owner: ubuntu
+        group: ubuntu
+        mode: '0644'
+
+    - name: Copy backend deployment manifest
+      copy:
+        dest: /home/ubuntu/k8s-manifests/backend-deployment.yaml
+        content: |
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: backend
+            labels:
+              app: av-converter
+              tier: backend
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: av-converter
+                tier: backend
+            template:
+              metadata:
+                labels:
+                  app: av-converter
+                  tier: backend
+              spec:
+                containers:
+                - name: backend
+                  image: av-converter-backend:latest
+                  imagePullPolicy: Never
+                  ports:
+                  - containerPort: 5000
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: backend-service
+            labels:
+              app: av-converter
+              tier: backend
+          spec:
+            type: ClusterIP
+            ports:
+            - port: 5000
+              targetPort: 5000
+            selector:
+              app: av-converter
+              tier: backend
+        owner: ubuntu
+        group: ubuntu
+        mode: '0644'
+
+    - name: Create application deployment script
+      copy:
+        dest: /home/ubuntu/deploy-app.sh
+        content: |
+          #!/bin/bash
+          set -e
+
+          echo "Cloning or updating repository..."
+          cd ~
+          if [ ! -d "video-to-audio-converter" ]; then
+            git clone https://github.com/Dineshraja62005/AV-converter.git video-to-audio-converter
+          else
+            cd video-to-audio-converter
+            git pull origin main
+          fi
+
+          cd ~/video-to-audio-converter/docker/dev
+
+          echo "Building Docker images..."
+          sudo docker build -t av-converter-frontend:latest -f ./frontend/Dockerfile .
+          sudo docker build -t av-converter-backend:latest -f ./backend/Dockerfile .
+
+          # Make sure Minikube can use the images
+          eval $(minikube docker-env)
+          docker tag av-converter-frontend:latest av-converter-frontend:latest
+          docker tag av-converter-backend:latest av-converter-backend:latest
+
+          echo "Deploying to Kubernetes..."
+          kubectl apply -f ~/k8s-manifests/
+
+          echo "Waiting for pods to be ready..."
+          kubectl wait --for=condition=ready pod -l app=av-converter --timeout=300s
+
+          # For external access, create a tunnel in the background
+          echo "Creating Minikube tunnel for external access..."
+          nohup minikube tunnel > /dev/null 2>&1 &
+
+          echo "Application deployed successfully!"
+          echo "Frontend URL: http://$(curl -s ifconfig.me):30080"
+          
+          # Show the pods and services
+          echo "Deployed pods:"
+          kubectl get pods
+          
+          echo "Deployed services:"
+          kubectl get services
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+
+    - name: Install required Python packages
+      pip:
+        name:
+          - kubernetes
+          - openshift
+        state: present

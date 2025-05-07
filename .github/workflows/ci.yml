@@ -1,4 +1,4 @@
-name: Deploy to EC2 with Minikube
+name: Terraform, Ansible, and Kubernetes Deployment
 
 on:
   push:
@@ -14,190 +14,124 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Deploy to EC2 with Minikube
+      # Setup SSH for Terraform and Ansible
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+
+      # Configure AWS credentials
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
+
+      # Setup Terraform
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.7
+
+      # Initialize Terraform
+      - name: Terraform Init
+        working-directory: ./terraform
+        run: terraform init
+
+      # Apply Terraform configuration
+      - name: Terraform Apply
+        working-directory: ./terraform
+        run: |
+          terraform apply -auto-approve \
+            -var="aws_access_key=${{ secrets.AWS_ACCESS_KEY_ID }}" \
+            -var="aws_secret_key=${{ secrets.AWS_SECRET_ACCESS_KEY }}" \
+            -var="aws_session_token=${{ secrets.AWS_SESSION_TOKEN }}" \
+            -var="key_name=${{ secrets.KEY_NAME }}" \
+            -var="private_key_path=~/.ssh/id_rsa"
+      
+      # Extract EC2 instance IP and store in output
+      - name: Get EC2 Instance IP
+        id: get-ip
+        working-directory: ./terraform
+        run: |
+          EC2_IP=$(terraform output -raw public_ip)
+          echo "ec2_ip=$EC2_IP" >> $GITHUB_OUTPUT
+          echo "EC2 Instance IP: $EC2_IP"
+          echo "Kubernetes URL: http://$EC2_IP:30080"
+
+      # Update EC2_HOST secret using GitHub API
+      - name: Update EC2_HOST secret
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          EC2_IP: ${{ steps.get-ip.outputs.ec2_ip }}
+        run: |
+          # Create a temporary file with the new secret value
+          echo -n "$EC2_IP" > ec2_host_value.txt
+          
+          # Get the existing secret to get its ID
+          SECRET_INFO=$(gh api \
+            repos/$REPO/actions/secrets/EC2_HOST 2>/dev/null || echo '{"key_id":""}')
+          
+          # Get the public key for secret encryption
+          KEY_INFO=$(gh api repos/$REPO/actions/secrets/public-key)
+          KEY_ID=$(echo $KEY_INFO | jq -r .key_id)
+          PUBLIC_KEY=$(echo $KEY_INFO | jq -r .key)
+          
+          # Install sodium_cli for encryption
+          sudo apt-get update && sudo apt-get install -y libsodium-dev
+          pip install sodium-cli
+          
+          # Encrypt the secret value
+          ENCRYPTED_VALUE=$(sodium-cli encrypt --public-key "$PUBLIC_KEY" --file ec2_host_value.txt | base64)
+          
+          # Update the secret
+          gh api \
+            --method PUT \
+            repos/$REPO/actions/secrets/EC2_HOST \
+            -f encrypted_value="$ENCRYPTED_VALUE" \
+            -f key_id="$KEY_ID"
+            
+          echo "Updated EC2_HOST secret with new IP address: $EC2_IP"
+          rm ec2_host_value.txt
+
+      # Install Ansible
+      - name: Install Ansible
+        run: |
+          sudo apt update
+          sudo apt install -y ansible
+
+      # Wait for the instance to be ready
+      - name: Wait for instance to be ready
+        run: |
+          echo "Waiting for instance to be ready..."
+          timeout 300 bash -c 'until ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa ubuntu@${{ steps.get-ip.outputs.ec2_ip }} "echo Instance ready"; do sleep 5; done'
+
+      # Run Ansible playbook
+      - name: Run Ansible playbook
+        run: |
+          export ANSIBLE_HOST_KEY_CHECKING=False
+          ansible-playbook -i ansible/inventory.ini ansible/k8s-setup.yml -v
+
+      # Deploy application using SSH
+      - name: Deploy application
         uses: appleboy/ssh-action@v1.0.0
         with:
-          host: ${{ secrets.EC2_HOST }}
+          host: ${{ steps.get-ip.outputs.ec2_ip }}
           username: ubuntu
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 22
           script: |
-            echo "Starting Kubernetes deployment with Minikube..."
+            echo "Running application deployment script..."
+            ~/deploy-app.sh
             
-            # Update packages
-            sudo apt update
-            
-            # Install Docker if not already installed
-            if ! command -v docker &> /dev/null; then
-              echo "Installing Docker..."
-              sudo apt install -y docker.io
-              sudo systemctl enable docker
-              sudo systemctl start docker
-              sudo usermod -aG docker $USER
-            fi
-            
-            # Install kubectl if not already installed
-            if ! command -v kubectl &> /dev/null; then
-              echo "Installing kubectl..."
-              curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-              sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
-            fi
-            
-            # Install Minikube if not already installed
-            if ! command -v minikube &> /dev/null; then
-              echo "Installing Minikube..."
-              curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
-              sudo install minikube-linux-amd64 /usr/local/bin/minikube
-            fi
-            
-            # Start Minikube if not already running
-            if ! minikube status &> /dev/null; then
-              echo "Starting Minikube..."
-              minikube start --driver=docker
-            else
-              echo "Minikube is already running."
-            fi
-            
-            # Clone or update the repository
-            cd ~
-            if [ ! -d "video-to-audio-converter" ]; then
-              git clone https://github.com/Dineshraja62005/AV-converter.git video-to-audio-converter
-            else
-              cd video-to-audio-converter
-              git pull origin main
-            fi
-            
-            cd ~/video-to-audio-converter
-            
-            # Build Docker images for frontend and backend
-            echo "Building Docker images..."
-            cd docker/dev
-            
-            # Tag images for Kubernetes
-            sudo docker build -t av-converter-frontend:latest -f ./frontend/Dockerfile .
-            sudo docker build -t av-converter-backend:latest -f ./backend/Dockerfile .
-            
-            # Make sure Minikube can use the images
-            eval $(minikube docker-env)
-            sudo docker tag av-converter-frontend:latest av-converter-frontend:latest
-            sudo docker tag av-converter-backend:latest av-converter-backend:latest
-            
-            # Create Kubernetes deployment files if they don't exist
-            mkdir -p ~/k8s-manifests
-            
-            # Frontend deployment
-            cat > ~/k8s-manifests/frontend-deployment.yaml << 'EOF'
-            apiVersion: apps/v1
-            kind: Deployment
-            metadata:
-              name: frontend
-              labels:
-                app: av-converter
-                tier: frontend
-            spec:
-              replicas: 1
-              selector:
-                matchLabels:
-                  app: av-converter
-                  tier: frontend
-              template:
-                metadata:
-                  labels:
-                    app: av-converter
-                    tier: frontend
-                spec:
-                  containers:
-                  - name: frontend
-                    image: av-converter-frontend:latest
-                    imagePullPolicy: Never
-                    ports:
-                    - containerPort: 3000
-            ---
-            apiVersion: v1
-            kind: Service
-            metadata:
-              name: frontend-service
-              labels:
-                app: av-converter
-                tier: frontend
-            spec:
-              type: NodePort
-              ports:
-              - port: 80
-                targetPort: 3000
-                nodePort: 30080
-              selector:
-                app: av-converter
-                tier: frontend
-            EOF
-            
-            # Backend deployment
-            cat > ~/k8s-manifests/backend-deployment.yaml << 'EOF'
-            apiVersion: apps/v1
-            kind: Deployment
-            metadata:
-              name: backend
-              labels:
-                app: av-converter
-                tier: backend
-            spec:
-              replicas: 1
-              selector:
-                matchLabels:
-                  app: av-converter
-                  tier: backend
-              template:
-                metadata:
-                  labels:
-                    app: av-converter
-                    tier: backend
-                spec:
-                  containers:
-                  - name: backend
-                    image: av-converter-backend:latest
-                    imagePullPolicy: Never
-                    ports:
-                    - containerPort: 5000
-            ---
-            apiVersion: v1
-            kind: Service
-            metadata:
-              name: backend-service
-              labels:
-                app: av-converter
-                tier: backend
-            spec:
-              type: ClusterIP
-              ports:
-              - port: 5000
-                targetPort: 5000
-              selector:
-                app: av-converter
-                tier: backend
-            EOF
-            
-            # Apply Kubernetes manifests
-            echo "Deploying to Kubernetes..."
-            kubectl apply -f ~/k8s-manifests/
-            
-            # Wait for pods to be ready
-            echo "Waiting for pods to be ready..."
-            kubectl wait --for=condition=ready pod -l app=av-converter --timeout=300s
-            
-            # Get the Minikube URL
-            echo "Getting Minikube URL..."
-            minikube service frontend-service --url
-            
-            # For external access, create a tunnel in the background
-            echo "Creating Minikube tunnel for external access..."
-            nohup minikube tunnel > /dev/null 2>&1 &
-            
-            # Show the pods and services
-            echo "Deployed pods:"
-            kubectl get pods
-            
-            echo "Deployed services:"
-            kubectl get services
-            
-            echo "Frontend URL: http://$(curl -s ifconfig.me):30080"
-            echo "Deployment completed!"
+            echo "=============================="
+            echo "Deployment complete!"
+            echo "Access your application at:"
+            echo "http://${{ steps.get-ip.outputs.ec2_ip }}:30080"
+            echo "=============================="

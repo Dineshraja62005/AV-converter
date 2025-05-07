@@ -26,13 +26,14 @@ variable "private_key_path" {
   type        = string
 }
 
-variable "ec2_host" {
-  description = "Public DNS or IP of the EC2 instance"
-  type        = string
-}
-
 variable "region" {
   description = "AWS region"
   type        = string
   default     = "us-east-1"
+}
+
+variable "instance_type" {
+  description = "EC2 instance type"
+  type        = string
+  default     = "t2.medium"
 }
