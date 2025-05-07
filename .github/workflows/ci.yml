@@ -1,20 +1,13 @@
-name: Deploy to EC2 with Minikube
+name: K8s Troubleshooting
 
 on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
   workflow_dispatch:
 
 jobs:
-  deploy:
+  troubleshoot:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Deploy to EC2 with Minikube
+      - name: Troubleshoot Kubernetes on EC2
         uses: appleboy/ssh-action@v1.0.0
         with:
           host: ${{ secrets.EC2_HOST }}
@@ -22,182 +15,65 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 22
           script: |
-            echo "Starting Kubernetes deployment with Minikube..."
+            echo "========== TROUBLESHOOTING KUBERNETES DEPLOYMENT =========="
             
-            # Update packages
-            sudo apt update
+            # 1. Check if Minikube is running
+            echo "Checking Minikube status:"
+            minikube status
             
-            # Install Docker if not already installed
-            if ! command -v docker &> /dev/null; then
-              echo "Installing Docker..."
-              sudo apt install -y docker.io
-              sudo systemctl enable docker
-              sudo systemctl start docker
-              sudo usermod -aG docker $USER
-            fi
+            # 2. Check running pods
+            echo -e "\nChecking pod status:"
+            kubectl get pods -A
             
-            # Install kubectl if not already installed
-            if ! command -v kubectl &> /dev/null; then
-              echo "Installing kubectl..."
-              curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-              sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
-            fi
+            # 3. Check our specific application pods
+            echo -e "\nChecking av-converter pods:"
+            kubectl get pods -l app=av-converter -o wide
             
-            # Install Minikube if not already installed
-            if ! command -v minikube &> /dev/null; then
-              echo "Installing Minikube..."
-              curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
-              sudo install minikube-linux-amd64 /usr/local/bin/minikube
-            fi
-            
-            # Start Minikube if not already running
-            if ! minikube status &> /dev/null; then
-              echo "Starting Minikube..."
-              minikube start --driver=docker
-            else
-              echo "Minikube is already running."
-            fi
-            
-            # Clone or update the repository
-            cd ~
-            if [ ! -d "video-to-audio-converter" ]; then
-              git clone https://github.com/Dineshraja62005/AV-converter.git video-to-audio-converter
-            else
-              cd video-to-audio-converter
-              git pull origin main
-            fi
-            
-            cd ~/video-to-audio-converter
-            
-            # Build Docker images for frontend and backend
-            echo "Building Docker images..."
-            cd docker/dev
-            
-            # Tag images for Kubernetes
-            sudo docker build -t av-converter-frontend:latest -f ./frontend/Dockerfile .
-            sudo docker build -t av-converter-backend:latest -f ./backend/Dockerfile .
-            
-            # Make sure Minikube can use the images
-            eval $(minikube docker-env)
-            sudo docker tag av-converter-frontend:latest av-converter-frontend:latest
-            sudo docker tag av-converter-backend:latest av-converter-backend:latest
-            
-            # Create Kubernetes deployment files if they don't exist
-            mkdir -p ~/k8s-manifests
-            
-            # Frontend deployment
-            cat > ~/k8s-manifests/frontend-deployment.yaml << 'EOF'
-            apiVersion: apps/v1
-            kind: Deployment
-            metadata:
-              name: frontend
-              labels:
-                app: av-converter
-                tier: frontend
-            spec:
-              replicas: 1
-              selector:
-                matchLabels:
-                  app: av-converter
-                  tier: frontend
-              template:
-                metadata:
-                  labels:
-                    app: av-converter
-                    tier: frontend
-                spec:
-                  containers:
-                  - name: frontend
-                    image: av-converter-frontend:latest
-                    imagePullPolicy: Never
-                    ports:
-                    - containerPort: 3000
-            ---
-            apiVersion: v1
-            kind: Service
-            metadata:
-              name: frontend-service
-              labels:
-                app: av-converter
-                tier: frontend
-            spec:
-              type: NodePort
-              ports:
-              - port: 80
-                targetPort: 3000
-                nodePort: 30080
-              selector:
-                app: av-converter
-                tier: frontend
-            EOF
-            
-            # Backend deployment
-            cat > ~/k8s-manifests/backend-deployment.yaml << 'EOF'
-            apiVersion: apps/v1
-            kind: Deployment
-            metadata:
-              name: backend
-              labels:
-                app: av-converter
-                tier: backend
-            spec:
-              replicas: 1
-              selector:
-                matchLabels:
-                  app: av-converter
-                  tier: backend
-              template:
-                metadata:
-                  labels:
-                    app: av-converter
-                    tier: backend
-                spec:
-                  containers:
-                  - name: backend
-                    image: av-converter-backend:latest
-                    imagePullPolicy: Never
-                    ports:
-                    - containerPort: 5000
-            ---
-            apiVersion: v1
-            kind: Service
-            metadata:
-              name: backend-service
-              labels:
-                app: av-converter
-                tier: backend
-            spec:
-              type: ClusterIP
-              ports:
-              - port: 5000
-                targetPort: 5000
-              selector:
-                app: av-converter
-                tier: backend
-            EOF
-            
-            # Apply Kubernetes manifests
-            echo "Deploying to Kubernetes..."
-            kubectl apply -f ~/k8s-manifests/
-            
-            # Wait for pods to be ready
-            echo "Waiting for pods to be ready..."
-            kubectl wait --for=condition=ready pod -l app=av-converter --timeout=300s
-            
-            # Get the Minikube URL
-            echo "Getting Minikube URL..."
-            minikube service frontend-service --url
-            
-            # For external access, create a tunnel in the background
-            echo "Creating Minikube tunnel for external access..."
-            nohup minikube tunnel > /dev/null 2>&1 &
-            
-            # Show the pods and services
-            echo "Deployed pods:"
-            kubectl get pods
-            
-            echo "Deployed services:"
+            # 4. Check services
+            echo -e "\nChecking services:"
             kubectl get services
             
-            echo "Frontend URL: http://$(curl -s ifconfig.me):30080"
-            echo "Deployment completed!"
+            # 5. Check detailed service info
+            echo -e "\nDetailed frontend service info:"
+            kubectl describe service frontend-service
+            
+            # 6. Check firewall/security group
+            echo -e "\nChecking if port 30080 is open:"
+            sudo netstat -tulpn | grep 30080
+            
+            # 7. Try to access the service locally
+            echo -e "\nTrying to access service locally:"
+            curl -v localhost:30080
+            
+            # 8. Check Minikube service URL
+            echo -e "\nChecking Minikube service URL:"
+            minikube service frontend-service --url
+            
+            # 9. Check node port exposure
+            echo -e "\nVerifying NodePort configuration:"
+            kubectl get service frontend-service -o jsonpath='{.spec.ports[0].nodePort}'
+            
+            # 10. Check if firewall is blocking the port
+            echo -e "\nChecking UFW status:"
+            sudo ufw status
+            
+            # 11. Add security group rule for port 30080 via AWS CLI
+            echo -e "\nAdding security group rule for port 30080:"
+            INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
+            SECURITY_GROUP_ID=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query 'Reservations[0].Instances[0].SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "AWS CLI not configured")
+            echo "Security Group ID: $SECURITY_GROUP_ID"
+            
+            # 12. Fix: Ensure the port is accessible
+            echo -e "\nFIX: Manually open port 30080 for external access:"
+            echo "Run this command manually in AWS console:"
+            echo "aws ec2 authorize-security-group-ingress --group-id YOUR_SECURITY_GROUP_ID --protocol tcp --port 30080 --cidr 0.0.0.0/0"
+            
+            # 13. Restart service as a fix
+            echo -e "\nFIX: Restarting services:"
+            kubectl rollout restart deployment frontend
+            
+            # 14. Test with port-forward as alternative
+            echo -e "\nSetting up port forwarding as alternative access method:"
+            echo "kubectl port-forward service/frontend-service 30080:80 --address 0.0.0.0 &"
+            
+            echo -e "\n========== TROUBLESHOOTING COMPLETE =========="
