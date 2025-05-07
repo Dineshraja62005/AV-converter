@@ -38,33 +38,12 @@ data "aws_ami" "ubuntu" {
   owners = ["099720109477"] # Canonical
 }
 
-# Check for existing instances with our tag
-data "aws_instances" "existing_k8s" {
-  filter {
-    name   = "tag:Name"
-    values = ["kubernetes-node-*"]
-  }
-  
-  filter {
-    name   = "instance-state-name"
-    values = ["running", "pending"]
-  }
-  
-  depends_on = [random_id.suffix]
-}
-
-locals {
-  create_instance = length(data.aws_instances.existing_k8s.ids) == 0
-  sg_id = data.aws_security_group.existing_sg.id
-}
-
-# EC2 instance for Kubernetes - only create if it doesn't exist
+# EC2 instance for Kubernetes
 resource "aws_instance" "k8s_node" {
-  count                  = local.create_instance ? 1 : 0
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.instance_type
   key_name               = var.key_name
-  vpc_security_group_ids = [local.sg_id]
+  vpc_security_group_ids = [data.aws_security_group.existing_sg.id]
 
   root_block_device {
     volume_size = 30
@@ -106,9 +85,7 @@ resource "aws_instance" "k8s_node" {
 resource "local_file" "ansible_inventory" {
   content = templatefile("${path.module}/templates/inventory.tmpl",
     {
-      k8s_node_ip = local.create_instance ? aws_instance.k8s_node[0].public_ip : (
-        length(data.aws_instances.existing_k8s.ids) > 0 ? data.aws_instances.existing_k8s.public_ips[0] : "127.0.0.1"
-      )
+      k8s_node_ip = aws_instance.k8s_node.public_ip
     }
   )
   filename = "${path.module}/../ansible/inventory.ini"
