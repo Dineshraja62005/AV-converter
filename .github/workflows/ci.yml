@@ -77,3 +77,5 @@ jobs:
             echo "kubectl port-forward service/frontend-service 30080:80 --address 0.0.0.0 &"
             
             echo -e "\n========== TROUBLESHOOTING COMPLETE =========="
+
+            
