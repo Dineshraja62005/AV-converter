@@ -31,6 +31,12 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: us-east-1
 
+      # Install required dependencies
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
       # Setup Terraform
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
@@ -53,30 +59,49 @@ jobs:
             -var="key_name=${{ secrets.KEY_NAME }}" \
             -var="private_key_path=~/.ssh/id_rsa"
       
-      # Extract EC2 instance IP and store in output
+      # Extract EC2 instance IP and store in output - FIXED
       - name: Get EC2 Instance IP
         id: get-ip
         working-directory: ./terraform
         run: |
-          EC2_IP=$(terraform output -raw public_ip)
-          echo "ec2_ip=$EC2_IP" >> $GITHUB_OUTPUT
-          echo "EC2 Instance IP: $EC2_IP"
-          echo "Kubernetes URL: http://$EC2_IP:30080"
+          # Extract the IP address carefully
+          OUTPUT=$(terraform output -raw public_ip)
+          
+          # Use a regex to find the IP pattern
+          if [[ $OUTPUT =~ ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+) ]]; then
+            EC2_IP=${BASH_REMATCH[1]}
+            
+            # Verify we have a valid IP
+            if [[ $EC2_IP =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "ec2_ip=$EC2_IP" >> $GITHUB_OUTPUT
+              echo "EC2 Instance IP: $EC2_IP"
+              echo "Kubernetes URL: http://$EC2_IP:30080"
+            else
+              echo "Extracted IP doesn't match expected pattern: $EC2_IP"
+              exit 1
+            fi
+          else
+            if [[ "$OUTPUT" == "no_instance_found" ]]; then
+              echo "No EC2 instance was found or created. Check AWS console."
+              exit 1
+            else
+              echo "Could not extract IP from Terraform output: $OUTPUT"
+              exit 1
+            fi
+          fi
 
-      # Update EC2_HOST secret using GitHub API
+      # Update EC2_HOST secret using GitHub API if needed and if we have permission
       - name: Update EC2_HOST secret
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && steps.get-ip.outputs.ec2_ip != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           EC2_IP: ${{ steps.get-ip.outputs.ec2_ip }}
         run: |
+          echo "Updating EC2_HOST secret to: $EC2_IP"
+          
           # Create a temporary file with the new secret value
           echo -n "$EC2_IP" > ec2_host_value.txt
-          
-          # Get the existing secret to get its ID
-          SECRET_INFO=$(gh api \
-            repos/$REPO/actions/secrets/EC2_HOST 2>/dev/null || echo '{"key_id":""}')
           
           # Get the public key for secret encryption
           KEY_INFO=$(gh api repos/$REPO/actions/secrets/public-key)
@@ -84,7 +109,6 @@ jobs:
           PUBLIC_KEY=$(echo $KEY_INFO | jq -r .key)
           
           # Install sodium_cli for encryption
-          sudo apt-get update && sudo apt-get install -y libsodium-dev
           pip install sodium-cli
           
           # Encrypt the secret value
