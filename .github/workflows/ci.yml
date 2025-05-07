@@ -59,70 +59,30 @@ jobs:
             -var="key_name=${{ secrets.KEY_NAME }}" \
             -var="private_key_path=~/.ssh/id_rsa"
       
-      # Extract EC2 instance IP and store in output - FIXED
+      # Extract EC2 instance IP and store in output
       - name: Get EC2 Instance IP
         id: get-ip
         working-directory: ./terraform
         run: |
           # Extract the IP address carefully
-          OUTPUT=$(terraform output -raw public_ip)
+          OUTPUT=$(terraform output -raw public_ip | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+')
           
-          # Use a regex to find the IP pattern
-          if [[ $OUTPUT =~ ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+) ]]; then
-            EC2_IP=${BASH_REMATCH[1]}
+          # Verify we have a valid IP
+          if [[ $OUTPUT =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            EC2_IP=$OUTPUT
+            echo "ec2_ip=$EC2_IP" >> $GITHUB_OUTPUT
+            echo "EC2 Instance IP: $EC2_IP"
+            echo "Kubernetes URL: http://$EC2_IP:30080"
             
-            # Verify we have a valid IP
-            if [[ $EC2_IP =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-              echo "ec2_ip=$EC2_IP" >> $GITHUB_OUTPUT
-              echo "EC2 Instance IP: $EC2_IP"
-              echo "Kubernetes URL: http://$EC2_IP:30080"
-            else
-              echo "Extracted IP doesn't match expected pattern: $EC2_IP"
-              exit 1
-            fi
+            # Display manual update instructions
+            echo "============================================================"
+            echo "IMPORTANT: Update your EC2_HOST secret manually with this IP"
+            echo "EC2_HOST = $EC2_IP"
+            echo "============================================================"
           else
-            if [[ "$OUTPUT" == "no_instance_found" ]]; then
-              echo "No EC2 instance was found or created. Check AWS console."
-              exit 1
-            else
-              echo "Could not extract IP from Terraform output: $OUTPUT"
-              exit 1
-            fi
+            echo "Could not extract valid IP from Terraform output: $OUTPUT"
+            exit 1
           fi
-
-      # Update EC2_HOST secret using GitHub API if needed and if we have permission
-      - name: Update EC2_HOST secret
-        if: github.event_name != 'pull_request' && steps.get-ip.outputs.ec2_ip != ''
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          EC2_IP: ${{ steps.get-ip.outputs.ec2_ip }}
-        run: |
-          echo "Updating EC2_HOST secret to: $EC2_IP"
-          
-          # Create a temporary file with the new secret value
-          echo -n "$EC2_IP" > ec2_host_value.txt
-          
-          # Get the public key for secret encryption
-          KEY_INFO=$(gh api repos/$REPO/actions/secrets/public-key)
-          KEY_ID=$(echo $KEY_INFO | jq -r .key_id)
-          PUBLIC_KEY=$(echo $KEY_INFO | jq -r .key)
-          
-          # Install sodium_cli for encryption
-          pip install sodium-cli
-          
-          # Encrypt the secret value
-          ENCRYPTED_VALUE=$(sodium-cli encrypt --public-key "$PUBLIC_KEY" --file ec2_host_value.txt | base64)
-          
-          # Update the secret
-          gh api \
-            --method PUT \
-            repos/$REPO/actions/secrets/EC2_HOST \
-            -f encrypted_value="$ENCRYPTED_VALUE" \
-            -f key_id="$KEY_ID"
-            
-          echo "Updated EC2_HOST secret with new IP address: $EC2_IP"
-          rm ec2_host_value.txt
 
       # Install Ansible
       - name: Install Ansible
@@ -159,3 +119,14 @@ jobs:
             echo "Access your application at:"
             echo "http://${{ steps.get-ip.outputs.ec2_ip }}:30080"
             echo "=============================="
+
+      # Final deployment information
+      - name: Deployment Information
+        run: |
+          echo "============================================================"
+          echo "🚀 DEPLOYMENT SUCCESSFUL!"
+          echo "📝 Please update these secrets for your next run:"
+          echo "   EC2_HOST = ${{ steps.get-ip.outputs.ec2_ip }}"
+          echo "📊 Access your application at:"
+          echo "   http://${{ steps.get-ip.outputs.ec2_ip }}:30080"
+          echo "============================================================"
