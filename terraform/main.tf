@@ -5,6 +5,22 @@ provider "aws" {
   token      = var.aws_session_token
 }
 
+# Generate random suffix for unique resource names
+resource "random_id" "suffix" {
+  byte_length = 4
+}
+
+# Get default VPC info
+data "aws_vpc" "default" {
+  default = true
+}
+
+# Look for existing kubernetes-sg security group
+data "aws_security_group" "existing_sg" {
+  name = "kubernetes-sg"
+  vpc_id = data.aws_vpc.default.id
+}
+
 # Get latest Ubuntu AMI
 data "aws_ami" "ubuntu" {
   most_recent = true
@@ -22,66 +38,33 @@ data "aws_ami" "ubuntu" {
   owners = ["099720109477"] # Canonical
 }
 
-# Security group for Kubernetes node
-resource "aws_security_group" "k8s_sg" {
-  name        = "kubernetes-sg"
-  description = "Security group for Kubernetes node"
-
-  # SSH access
-  ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-    description = "SSH access"
+# Check for existing instances with our tag
+data "aws_instances" "existing_k8s" {
+  filter {
+    name   = "tag:Name"
+    values = ["kubernetes-node-*"]
   }
-
-  # HTTP access
-  ingress {
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-    description = "HTTP access"
+  
+  filter {
+    name   = "instance-state-name"
+    values = ["running", "pending"]
   }
-
-  # Kubernetes NodePort range
-  ingress {
-    from_port   = 30000
-    to_port     = 32767
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-    description = "Kubernetes NodePort range"
-  }
-
-  # Specific NodePort for frontend (30080)
-  ingress {
-    from_port   = 30080
-    to_port     = 30080
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-    description = "Frontend NodePort"
-  }
-
-  # Allow all outbound traffic
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = {
-    Name = "kubernetes-security-group"
-  }
+  
+  depends_on = [random_id.suffix]
 }
 
-# EC2 instance for Kubernetes
+locals {
+  create_instance = length(data.aws_instances.existing_k8s.ids) == 0
+  sg_id = data.aws_security_group.existing_sg.id
+}
+
+# EC2 instance for Kubernetes - only create if it doesn't exist
 resource "aws_instance" "k8s_node" {
+  count                  = local.create_instance ? 1 : 0
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.instance_type
   key_name               = var.key_name
-  vpc_security_group_ids = [aws_security_group.k8s_sg.id]
+  vpc_security_group_ids = [local.sg_id]
 
   root_block_device {
     volume_size = 30
@@ -89,7 +72,9 @@ resource "aws_instance" "k8s_node" {
   }
 
   tags = {
-    Name = "kubernetes-node"
+    Name = "kubernetes-node-${random_id.suffix.hex}"
+    CreatedBy = "terraform"
+    Project = "av-converter"
   }
 
   # User data script to install basic requirements
@@ -121,7 +106,9 @@ resource "aws_instance" "k8s_node" {
 resource "local_file" "ansible_inventory" {
   content = templatefile("${path.module}/templates/inventory.tmpl",
     {
-      k8s_node_ip = aws_instance.k8s_node.public_ip
+      k8s_node_ip = local.create_instance ? aws_instance.k8s_node[0].public_ip : (
+        length(data.aws_instances.existing_k8s.ids) > 0 ? data.aws_instances.existing_k8s.public_ips[0] : "127.0.0.1"
+      )
     }
   )
   filename = "${path.module}/../ansible/inventory.ini"
