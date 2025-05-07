@@ -67,3 +67,4 @@ resource "aws_instance" "av_ec2" {
     }
   }
 }
+
