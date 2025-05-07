@@ -57,7 +57,11 @@
         append: yes
       loop: "{{ docker_users }}"
 
-    # Fixed kubectl download process
+    - name: Fix Docker socket permissions
+      file:
+        path: /var/run/docker.sock
+        mode: '0666'
+      
     - name: Get latest stable kubectl version
       shell: curl -L -s https://dl.k8s.io/release/stable.txt
       register: kubectl_version
@@ -93,14 +97,30 @@
         group: ubuntu
         mode: '0755'
 
-    - name: Start Minikube
+    - name: Verify Docker works for ubuntu user
       become_user: ubuntu
+      shell: docker ps
+      register: docker_test
+      ignore_errors: yes
+
+    - name: Start Minikube as root if user permissions fail
       shell: |
         minikube start --driver=docker --memory=2048 --cpus=2
+      args:
+        creates: /root/.minikube
+      when: docker_test is failed
+      ignore_errors: yes
+
+    - name: Start Minikube as ubuntu user
+      become_user: ubuntu
+      shell: |
+        docker ps && minikube start --driver=docker --memory=2048 --cpus=2
       args:
         creates: /home/ubuntu/.minikube
       environment:
         HOME: /home/ubuntu
+      when: docker_test is succeeded
+      ignore_errors: yes
 
     - name: Create k8s-manifests directory
       file:
@@ -209,9 +229,44 @@
         group: ubuntu
         mode: '0644'
 
-    - name: Create application deployment script
+    - name: Create direct deployment script (without Kubernetes)
       copy:
-        dest: /home/ubuntu/deploy-app.sh
+        dest: /home/ubuntu/direct-deploy.sh
+        content: |
+          #!/bin/bash
+          set -e
+
+          echo "Cloning or updating repository..."
+          cd ~
+          if [ ! -d "video-to-audio-converter" ]; then
+            git clone https://github.com/Dineshraja62005/AV-converter.git video-to-audio-converter
+          else
+            cd video-to-audio-converter
+            git pull origin main
+          fi
+
+          cd ~/video-to-audio-converter/docker/dev
+
+          echo "Deploying with Docker Compose directly..."
+          sudo docker-compose down || true
+          sudo docker-compose up -d --build
+
+          # Open port 3001 in the firewall if needed
+          sudo iptables -I INPUT -p tcp --dport 3001 -j ACCEPT
+
+          echo "Application deployed successfully!"
+          echo "Frontend URL: http://$(curl -s ifconfig.me):3001"
+          
+          # Show running containers
+          echo "Running containers:"
+          sudo docker ps
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+
+    - name: Create Kubernetes application deployment script
+      copy:
+        dest: /home/ubuntu/k8s-deploy.sh
         content: |
           #!/bin/bash
           set -e
@@ -231,33 +286,57 @@
           sudo docker build -t av-converter-frontend:latest -f ./frontend/Dockerfile .
           sudo docker build -t av-converter-backend:latest -f ./backend/Dockerfile .
 
-          # Make sure Minikube can use the images
-          eval $(minikube docker-env)
-          docker tag av-converter-frontend:latest av-converter-frontend:latest
-          docker tag av-converter-backend:latest av-converter-backend:latest
+          # Check if minikube is running
+          if minikube status &>/dev/null; then
+            # Make sure Minikube can use the images
+            eval $(minikube docker-env)
+            docker tag av-converter-frontend:latest av-converter-frontend:latest
+            docker tag av-converter-backend:latest av-converter-backend:latest
 
-          echo "Deploying to Kubernetes..."
-          kubectl apply -f ~/k8s-manifests/
+            echo "Deploying to Kubernetes..."
+            kubectl apply -f ~/k8s-manifests/
 
-          echo "Waiting for pods to be ready..."
-          kubectl wait --for=condition=ready pod -l app=av-converter --timeout=300s
+            echo "Waiting for pods to be ready..."
+            kubectl wait --for=condition=ready pod -l app=av-converter --timeout=300s || true
 
-          # For external access, create a tunnel in the background
-          echo "Creating Minikube tunnel for external access..."
-          nohup minikube tunnel > /dev/null 2>&1 &
+            # For external access, create a tunnel in the background
+            echo "Creating Minikube tunnel for external access..."
+            nohup minikube tunnel > /dev/null 2>&1 &
 
-          # Open port 30080 in the firewall if needed
-          sudo iptables -I INPUT -p tcp --dport 30080 -j ACCEPT
+            # Open port 30080 in the firewall if needed
+            sudo iptables -I INPUT -p tcp --dport 30080 -j ACCEPT
 
-          echo "Application deployed successfully!"
-          echo "Frontend URL: http://$(curl -s ifconfig.me):30080"
+            echo "Application deployed successfully on Kubernetes!"
+            echo "Frontend URL: http://$(curl -s ifconfig.me):30080"
+            
+            # Show the pods and services
+            echo "Deployed pods:"
+            kubectl get pods
+            
+            echo "Deployed services:"
+            kubectl get services
+          else
+            echo "Minikube is not running. Falling back to direct Docker Compose deployment..."
+            ./direct-deploy.sh
+          fi
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+
+    - name: Create a simple deploy script (selects best method)
+      copy:
+        dest: /home/ubuntu/deploy-app.sh
+        content: |
+          #!/bin/bash
           
-          # Show the pods and services
-          echo "Deployed pods:"
-          kubectl get pods
-          
-          echo "Deployed services:"
-          kubectl get services
+          # Check if minikube is working
+          if minikube status &>/dev/null; then
+            echo "Using Kubernetes deployment method..."
+            ./k8s-deploy.sh
+          else
+            echo "Using Docker Compose deployment method..."
+            ./direct-deploy.sh
+          fi
         owner: ubuntu
         group: ubuntu
         mode: '0755'
